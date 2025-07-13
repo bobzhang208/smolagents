@@ -100,10 +100,12 @@ GET_TRACE = os.environ.get("GET_TRACE", "false").lower() == "true"
 if GET_TRACE:
     import sys
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../Agent/src/dev_func')))
-    from dev_func.trace_func import trace
+    from dev_func.trace_func import trace, trace_output
 else:
     import warnings
     def trace(*args, **kwargs):
+        pass
+    def trace_output(*args, **kwargs):
         pass
 
 def get_variable_names(self, template: str) -> set[str]:
@@ -406,6 +408,10 @@ You have been provided with these additional arguments, that you can access usin
             level=LogLevel.INFO,
             title=self.name if hasattr(self, "name") else None,
         )
+
+        trace_output("MODEL", self.model.model_id+"\n")
+        trace_output("TASK_INPUT", self.task+"\n")
+
         self.memory.steps.append(TaskStep(task=self.task, task_images=images))
 
         if getattr(self, "python_executor", None):
@@ -1627,11 +1633,21 @@ class CodeAgent(MultiStepAgent):
                 trace(trace_type="LLM_CALL_END")
                 memory_step.model_output_message = chat_message
                 output_text = chat_message.content
+
+                try:
+                    cot_output = chat_message.raw.choices[0].message.reasoning_content
+                except (AttributeError, IndexError):
+                    cot_output = None
+
                 self.logger.log_markdown(
                     content=output_text,
                     title="Output message of the LLM:",
                     level=LogLevel.DEBUG,
                 )
+
+                if cot_output:
+                    trace_output("COT_MESSAGE", cot_output+"\n")
+                trace_output("LLM_MESSAGE", output_text+"\n")
 
             # This adds <end_code> sequence to the history.
             # This will nudge ulterior LLM calls to finish with <end_code>, thus efficiently stopping generation.
@@ -1678,6 +1694,7 @@ class CodeAgent(MultiStepAgent):
                 ]
             observation = "Execution logs:\n" + execution_logs
             trace(trace_type="LOCAL_PYTHON_EXEC_END")
+            trace_output("EXECUTION_LOG", execution_logs)
         except Exception as e:
             trace(trace_type="LOCAL_PYTHON_EXEC_END_ERROR")
             if hasattr(self.python_executor, "state") and "_print_outputs" in self.python_executor.state:
@@ -1690,6 +1707,7 @@ class CodeAgent(MultiStepAgent):
                     memory_step.observations = "Execution logs:\n" + execution_logs
                     self.logger.log(Group(*execution_outputs_console), level=LogLevel.INFO)
             error_msg = str(e)
+            trace_output("EXECUTION_LOG", error_msg+"\n")
             if "Import of " in error_msg and " is not allowed" in error_msg:
                 self.logger.log(
                     "[bold red]Warning to user: Code execution failed due to an unauthorized import - Consider passing said import under `additional_authorized_imports` when initializing your CodeAgent.",
@@ -1707,6 +1725,8 @@ class CodeAgent(MultiStepAgent):
                 style=(f"bold {YELLOW_HEX}" if is_final_answer else ""),
             ),
         ]
+        if is_final_answer:
+            trace_output("FINAL_ANSWER", truncated_output+"\n")
         self.logger.log(Group(*execution_outputs_console), level=LogLevel.INFO)
         memory_step.action_output = output
         yield FinalOutput(output=output if is_final_answer else None)
