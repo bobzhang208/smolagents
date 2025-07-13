@@ -95,6 +95,16 @@ from .utils import (
 
 logger = getLogger(__name__)
 
+import os
+GET_TRACE = os.environ.get("GET_TRACE", "false").lower() == "true"
+if GET_TRACE:
+    import sys
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../Agent/src/dev_func')))
+    from dev_func.trace_func import trace
+else:
+    import warnings
+    def trace(*args, **kwargs):
+        pass
 
 def get_variable_names(self, template: str) -> set[str]:
     pattern = re.compile(r"\{\{([^{}]+)\}\}")
@@ -1608,11 +1618,13 @@ class CodeAgent(MultiStepAgent):
                 memory_step.model_output_message = chat_message
                 output_text = chat_message.content
             else:
+                trace(trace_type="LLM_CALL_BEGIN")
                 chat_message: ChatMessage = self.model.generate(
                     input_messages,
                     stop_sequences=["<end_code>", "Observation:", "Calling tools:"],
                     **additional_args,
                 )
+                trace(trace_type="LLM_CALL_END")
                 memory_step.model_output_message = chat_message
                 output_text = chat_message.content
                 self.logger.log_markdown(
@@ -1656,6 +1668,7 @@ class CodeAgent(MultiStepAgent):
         self.logger.log_code(title="Executing parsed code:", content=code_action, level=LogLevel.INFO)
         is_final_answer = False
         try:
+            trace(trace_type="LOCAL_PYTHON_EXEC_BEGIN")
             output, execution_logs, is_final_answer = self.python_executor(code_action)
             execution_outputs_console = []
             if len(execution_logs) > 0:
@@ -1664,7 +1677,9 @@ class CodeAgent(MultiStepAgent):
                     Text(execution_logs),
                 ]
             observation = "Execution logs:\n" + execution_logs
+            trace(trace_type="LOCAL_PYTHON_EXEC_END")
         except Exception as e:
+            trace(trace_type="LOCAL_PYTHON_EXEC_END_ERROR")
             if hasattr(self.python_executor, "state") and "_print_outputs" in self.python_executor.state:
                 execution_logs = str(self.python_executor.state["_print_outputs"])
                 if len(execution_logs) > 0:
